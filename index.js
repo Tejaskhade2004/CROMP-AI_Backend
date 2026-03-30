@@ -12,9 +12,26 @@ import WebsiteRouter from "./routes/Website.routes.js"
 const app=express()
 app.use(express.json())
 app.use(cookieParser())
+
+// CORS configuration for both development and production
+const allowedOrigins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:3000",
+    process.env.FRONTEND_URL || "https://cromp-ai-frontend.onrender.com"
+]
+
 app.use(cors({
-    origin:"http://localhost:5173",
-    credentials:true
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true)
+        } else {
+            callback(new Error("Not allowed by CORS"))
+        }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization"]
 }))
 app.use("/api/auth",authRouter)
 app.use("/api/user",UserRouter)
