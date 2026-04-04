@@ -90,28 +90,58 @@ export const generateImage = async (prompt, model = 'text-to-image', numberOfIma
         const images = []
 
         for (let i = 0; i < numberOfImages; i++) {
-            const response = await fetch(
-                `https://api-inference.huggingface.co/models/${modelIdentifier}`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,
-                    },
-                    method: "POST",
-                    body: JSON.stringify({
-                        inputs: prompt,
-                        parameters: {
-                            height: 768,
-                            width: 1024,
-                            num_inference_steps: 40,
-                            guidance_scale: 7.5
+            let response
+            let retries = 0
+            const maxRetries = 3
+            
+            while (retries < maxRetries) {
+                try {
+                    response = await fetch(
+                        `https://api-inference.huggingface.co/models/${modelIdentifier}`,
+                        {
+                            headers: {
+                                Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,
+                            },
+                            method: "POST",
+                            body: JSON.stringify({
+                                inputs: prompt,
+                                parameters: {
+                                    height: 768,
+                                    width: 1024,
+                                    num_inference_steps: 40,
+                                    guidance_scale: 7.5
+                                }
+                            }),
                         }
-                    }),
-                }
-            )
+                    )
 
-            if (!response.ok) {
-                const errorData = await response.json()
-                throw new Error(`Image generation failed: ${errorData.error || JSON.stringify(errorData)}`)
+                    if (!response.ok) {
+                        const contentType = response.headers.get('content-type')
+                        if (contentType?.includes('application/json')) {
+                            const errorData = await response.json()
+                            if (errorData.error && errorData.error.includes('currently loading')) {
+                                retries++
+                                if (retries < maxRetries) {
+                                    console.log(`Model loading... retry ${retries}/${maxRetries}`)
+                                    await new Promise(resolve => setTimeout(resolve, 10000))
+                                    continue
+                                }
+                            }
+                            throw new Error(`Image generation failed: ${errorData.error || JSON.stringify(errorData)}`)
+                        } else {
+                            throw new Error(`API returned status ${response.status}`)
+                        }
+                    }
+                    break
+                } catch (error) {
+                    retries++
+                    if (retries < maxRetries) {
+                        console.log(`Retry ${retries}/${maxRetries} after error: ${error.message}`)
+                        await new Promise(resolve => setTimeout(resolve, 5000))
+                    } else {
+                        throw error
+                    }
+                }
             }
 
             const blob = await response.blob()
