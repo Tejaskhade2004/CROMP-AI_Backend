@@ -18,19 +18,48 @@ router.get('/health', (req, res) => {
     })
 })
 
-// Content Generation Route
-router.post('/generate-content', isAuth, generateContentController)
+// Content Generation Route - Optional Auth (works with or without login)
+router.post('/generate-content', (req, res, next) => {
+    // Try to authenticate but don't fail if no token
+    const token = req.cookies.token
+    if (token) {
+        isAuth(req, res, () => generateContentController(req, res))
+    } else {
+        generateContentController(req, res)
+    }
+})
 
-// Image Generation Route
-router.post('/generate-image', isAuth, generateImageController)
+// Image Generation Route - Optional Auth
+router.post('/generate-image', (req, res, next) => {
+    const token = req.cookies.token
+    if (token) {
+        isAuth(req, res, () => generateImageController(req, res))
+    } else {
+        generateImageController(req, res)
+    }
+})
 
-// Research Generation Route
-router.post('/generate-research', isAuth, generateResearchController)
+// Research Generation Route - Optional Auth
+router.post('/generate-research', (req, res, next) => {
+    const token = req.cookies.token
+    if (token) {
+        isAuth(req, res, () => generateResearchController(req, res))
+    } else {
+        generateResearchController(req, res)
+    }
+})
 
-// Advanced Generation Route (Premium)
-router.post('/generate-advanced', isAuth, generateAdvancedController)
+// Advanced Generation Route (Premium) - Optional Auth
+router.post('/generate-advanced', (req, res, next) => {
+    const token = req.cookies.token
+    if (token) {
+        isAuth(req, res, () => generateAdvancedController(req, res))
+    } else {
+        generateAdvancedController(req, res)
+    }
+})
 
-// Get Available Models
+// Get Available Models - No auth required
 router.get('/models', getModelsController)
 
 export default router
