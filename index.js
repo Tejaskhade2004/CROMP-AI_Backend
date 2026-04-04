@@ -7,6 +7,7 @@ import cookieParser from "cookie-parser"
 import cors from "cors"
 import UserRouter from "./routes/user.routes.js"
 import WebsiteRouter from "./routes/Website.routes.js"
+import AIRouter from "./routes/ai.routes.js"
 
 
 const app=express()
@@ -33,9 +34,17 @@ app.use(cors({
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"]
 }))
+
+// Fix Firebase COOP warning
+app.use((req, res, next) => {
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups')
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+    next()
+})
 app.use("/api/auth",authRouter)
 app.use("/api/user",UserRouter)
 app.use("/api/website",WebsiteRouter)
+app.use("/api/ai",AIRouter)
 
 app.listen(process.env.PORT || 5000,()=>{
     console.log("Server running...");

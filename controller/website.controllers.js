@@ -415,8 +415,39 @@ const extractHtmlFromText = (text) => {
     return text.slice(start, end + "</html>".length)
 }
 
+const normalizeModelOutput = (text) => {
+    if (!text || typeof text !== "string") return ""
+
+    let normalized = text.trim()
+
+    // Remove markdown code fences if present
+    normalized = normalized.replace(/```json\n?|```/gi, "")
+
+    // Remove stray backticks
+    normalized = normalized.replace(/`/g, "")
+
+    // Sometimes model prepends text like 'Here is...' or 'Output:'
+    const jsonStart = normalized.indexOf("{")
+    const jsonEnd = normalized.lastIndexOf("}")
+    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+        normalized = normalized.slice(jsonStart, jsonEnd + 1)
+    }
+
+    return normalized
+}
+
 const parseWebsitePayload = (rawText) => {
-    const parsedJson = extractJson(rawText)
+    if (!rawText || typeof rawText !== "string") return null
+
+    const normalizedText = normalizeModelOutput(rawText)
+
+    let parsedJson = null
+    try {
+        parsedJson = extractJson(normalizedText)
+    } catch (e) {
+        parsedJson = null
+    }
+
     if (parsedJson?.code) {
         return {
             message: parsedJson.message || "Website updated successfully",
@@ -424,7 +455,8 @@ const parseWebsitePayload = (rawText) => {
         }
     }
 
-    const html = extractHtmlFromText(rawText)
+    // Fallback: sometimes output is direct HTML (no JSON)
+    const html = extractHtmlFromText(rawText) || extractHtmlFromText(normalizedText)
     if (html) {
         return {
             message: "Website updated successfully",
@@ -466,13 +498,24 @@ ${prompt}
         let rawResponse = await generateResponse(updatePrompt)
         let parsed = parseWebsitePayload(rawResponse)
 
-        if (!parsed) {
-            rawResponse = await generateResponse(updatePrompt + "\n\nRETURN ONLY VALID RAW JSON.")
+        // Retry logic for malformed output
+        const retryMessages = [
+            "\n\nREMEMBER TO RETURN RAW JSON ONLY, with no markdown or extra text.",
+            "\n\nOUTPUT MUST BE RAW JSON ONLY, with keys message and code.",
+            "\n\nPlease avoid extra narration and return exactly the JSON object."
+        ]
+
+        for (let i = 0; i < retryMessages.length && !parsed; i++) {
+            rawResponse = await generateResponse(updatePrompt + retryMessages[i])
             parsed = parseWebsitePayload(rawResponse)
         }
 
         if (!parsed) {
-            return res.status(500).json({ message: "Failed to update website code. The model returned malformed output. Please retry." })
+            console.error("Malformed model output when updating website:", rawResponse)
+            return res.status(500).json({
+                message: "Failed to update website code. The model returned malformed output. Please retry.",
+                details: rawResponse?.slice?.(0, 1000)
+            })
         }
 
         website.latestCode = parsed.code
