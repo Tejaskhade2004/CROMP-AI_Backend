@@ -2,7 +2,11 @@ import dotenv from "dotenv"
 dotenv.config()
 
 const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
-const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY
+
+// Separate API keys for each model
+const NVIDIA_LLAMA_API_KEY = process.env.NVIDIA_LLAMA_API_KEY
+const NVIDIA_MISTRAL_API_KEY = process.env.NVIDIA_MISTRAL_API_KEY
+const NVIDIA_MIXTRAL_API_KEY = process.env.NVIDIA_MIXTRAL_API_KEY
 const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY
 
 // ============ MODEL CONFIGURATION ============
@@ -14,7 +18,16 @@ const MODELS = {
 
 // ============ CONTENT GENERATION (Llama 2 70B & Mixtral) ============
 export const generateContent = async (prompt, type = 'general', model = 'llama-2-70b') => {
-    if (!NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY is missing in .env")
+    // Select the appropriate API key based on model
+    const isLlama = model === 'llama-2-70b' || !model || model.includes('llama')
+    const isMixtral = model === 'mixtral' || model.includes('mixtral')
+    
+    const apiKey = isMixtral ? NVIDIA_MIXTRAL_API_KEY : NVIDIA_LLAMA_API_KEY
+    
+    if (!apiKey) {
+        const keyName = isMixtral ? 'NVIDIA_MIXTRAL_API_KEY' : 'NVIDIA_LLAMA_API_KEY'
+        throw new Error(`${keyName} is missing in .env`)
+    }
 
     const systemPrompts = {
         'movie-description': `You are an acclaimed film critic and screenwriter with 20+ years of experience. Your task is to generate engaging, cinematic movie descriptions that captivate audiences. Write in an eloquent, sophisticated style that highlights the film's unique appeal.`,
@@ -34,7 +47,7 @@ export const generateContent = async (prompt, type = 'general', model = 'llama-2
         const response = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${NVIDIA_API_KEY}`,
+                "Authorization": `Bearer ${apiKey}`,
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -162,7 +175,7 @@ export const generateImage = async (prompt, model = 'text-to-image', numberOfIma
 
 // ============ RESEARCH GENERATION (Mistral 7B - Fast & Focused) ============
 export const generateResearch = async (query, type = 'movie-research', model = 'mistral-7b') => {
-    if (!NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY is missing in .env")
+    if (!NVIDIA_MISTRAL_API_KEY) throw new Error("NVIDIA_MISTRAL_API_KEY is missing in .env")
 
     const systemPrompts = {
         'movie-research': `You are a film research specialist with access to vast entertainment databases. Provide thorough, well-researched information about movies. Format with clear sections and bullet points. Include production details, cast information, budget, box office, and cultural impact.`,
@@ -181,7 +194,7 @@ export const generateResearch = async (query, type = 'movie-research', model = '
         const response = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${NVIDIA_API_KEY}`,
+                "Authorization": `Bearer ${NVIDIA_MISTRAL_API_KEY}`,
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -225,7 +238,7 @@ export const generateResearch = async (query, type = 'movie-research', model = '
 
 // ============ ADVANCED GENERATION (Mixtral 8x7B - Best Quality) ============
 export const generateAdvanced = async (prompt, type = 'advanced-content') => {
-    if (!NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY is missing in .env")
+    if (!NVIDIA_MIXTRAL_API_KEY) throw new Error("NVIDIA_MIXTRAL_API_KEY is missing in .env")
 
     const systemPrompts = {
         'advanced-content': `You are a world-class creative writer with expertise in film, storytelling, and entertainment. Your task is to produce high-quality, sophisticated content that exceeds industry standards. Work at the highest level of creative excellence.`,
@@ -241,7 +254,7 @@ export const generateAdvanced = async (prompt, type = 'advanced-content') => {
         const response = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${NVIDIA_API_KEY}`,
+                "Authorization": `Bearer ${NVIDIA_MIXTRAL_API_KEY}`,
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
