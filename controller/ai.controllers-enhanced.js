@@ -36,11 +36,13 @@ export const generateContentController = async (req, res) => {
             timestamp: result.timestamp
         })
     } catch (error) {
-        console.error('Content generation error:', error)
+        console.error('Content generation error:', error.message)
+        console.error('Full error:', error)
         return res.status(500).json({
             success: false,
             message: error.message || 'Failed to generate content',
-            error: error.toString()
+            error: process.env.NODE_ENV === 'development' ? error.toString() : 'Server error',
+            details: error.message
         })
     }
 }
@@ -78,11 +80,13 @@ export const generateImageController = async (req, res) => {
             count: images.length
         })
     } catch (error) {
-        console.error('Image generation error:', error)
+        console.error('Image generation error:', error.message)
+        console.error('Full error:', error)
         return res.status(500).json({
             success: false,
             message: error.message || 'Failed to generate images',
-            error: error.toString()
+            error: process.env.NODE_ENV === 'development' ? error.toString() : 'Server error',
+            details: error.message
         })
     }
 }
