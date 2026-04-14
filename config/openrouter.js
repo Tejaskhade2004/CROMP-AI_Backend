@@ -16,7 +16,7 @@ const providerOrder = (process.env.OPENROUTER_PROVIDERS || "OpenInference")
     .filter(Boolean)
 
 
-export const generateResponse = async (prompt, modelOverride) => {
+export const generateResponse = async (prompt, modelOverride, options = {}) => {
     if (!openrouterApiKey) throw new Error("OPENROUTERAPI is missing in .env");
     const modelToUse = modelOverride || model
     const sendRequest = async (withProvider = true) => fetch(openrouterUrl, {
@@ -37,6 +37,7 @@ export const generateResponse = async (prompt, modelOverride) => {
                 },
             ],
             temperature: 0.2,
+            max_tokens: options.maxTokens || 16384,
             ...(withProvider ? {
                 provider: {
                     order: providerOrder,

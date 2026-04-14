@@ -1,6 +1,14 @@
 import { generateContent, generateImage, generateResearch } from "../config/nvidia-ai.js"
 import User from "../models/user.model.js"
 
+const normalizeControllerErrorMessage = (error, fallback) => {
+    const message = error?.message || fallback
+    if (message.includes("Unexpected non-whitespace character after JSON")) {
+        return "AI provider returned malformed response. Please retry in a few seconds."
+    }
+    return message
+}
+
 // ============ CONTENT GENERATION ============
 export const generateContentController = async (req, res) => {
     try {
@@ -35,9 +43,10 @@ export const generateContentController = async (req, res) => {
         })
     } catch (error) {
         console.error('Content generation error:', error)
+        const normalizedMessage = normalizeControllerErrorMessage(error, 'Failed to generate content')
         return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to generate content',
+            message: normalizedMessage,
             error: error.toString()
         })
     }
@@ -77,9 +86,10 @@ export const generateImageController = async (req, res) => {
         })
     } catch (error) {
         console.error('Image generation error:', error)
+        const normalizedMessage = normalizeControllerErrorMessage(error, 'Failed to generate images')
         return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to generate images',
+            message: normalizedMessage,
             error: error.toString()
         })
     }
@@ -119,9 +129,10 @@ export const generateResearchController = async (req, res) => {
         })
     } catch (error) {
         console.error('Research generation error:', error)
+        const normalizedMessage = normalizeControllerErrorMessage(error, 'Failed to generate research')
         return res.status(500).json({
             success: false,
-            message: error.message || 'Failed to generate research',
+            message: normalizedMessage,
             error: error.toString()
         })
     }

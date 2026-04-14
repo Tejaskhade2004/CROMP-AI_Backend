@@ -5,7 +5,7 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1/chat/completions"
 const defaultModel = process.env.GROQ_DEFAULT_MODEL || "llama-3.1-8b-instant"
 
-export const generateResponse = async (prompt, modelOverride = defaultModel) => {
+export const generateResponse = async (prompt, modelOverride = defaultModel, options = {}) => {
     if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY is missing in .env")
 
     const response = await fetch(GROQ_BASE_URL, {
@@ -28,7 +28,7 @@ export const generateResponse = async (prompt, modelOverride = defaultModel) => 
                 }
             ],
             temperature: 0.2,
-            max_tokens: 16384
+            max_tokens: options.maxTokens || 16384
         })
     })
 

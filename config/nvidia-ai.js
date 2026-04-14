@@ -5,6 +5,76 @@ const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY
 const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY
 
+const parseJsonSafely = (rawText) => {
+    try {
+        return JSON.parse(rawText)
+    } catch {
+        return null
+    }
+}
+
+const readApiResponse = async (response) => {
+    const rawText = await response.text()
+    const data = parseJsonSafely(rawText)
+    return { rawText, data }
+}
+
+const getApiErrorMessage = (parsed, rawText, fallback = "Unknown provider error") => {
+    if (parsed?.error?.message) return parsed.error.message
+    if (typeof parsed?.error === "string") return parsed.error
+    if (parsed?.message) return parsed.message
+    if (rawText && rawText.trim()) return rawText.slice(0, 500)
+    return fallback
+}
+
+const extractContentFromSse = (rawText) => {
+    if (!rawText || typeof rawText !== "string") return ""
+    const lines = rawText.split("\n")
+    let fullContent = ""
+
+    for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith("data: ")) continue
+        const payload = trimmed.slice(6)
+        if (!payload || payload === "[DONE]") continue
+
+        const parsed = parseJsonSafely(payload)
+        if (!parsed) continue
+
+        const delta = parsed?.choices?.[0]?.delta?.content
+        const message = parsed?.choices?.[0]?.message?.content
+        const text = parsed?.choices?.[0]?.text
+        const content = delta || message || text || ""
+        if (content) fullContent += content
+    }
+
+    return fullContent.trim()
+}
+
+const extractCompletionContent = (data, rawText) => {
+    const jsonContent =
+        data?.choices?.[0]?.message?.content ||
+        data?.choices?.[0]?.text ||
+        data?.content ||
+        ""
+
+    if (typeof jsonContent === "string" && jsonContent.trim()) {
+        return jsonContent.trim()
+    }
+
+    const sseContent = extractContentFromSse(rawText)
+    if (sseContent) return sseContent
+
+    if (typeof rawText === "string") {
+        const trimmed = rawText.trim()
+        if (trimmed && !trimmed.startsWith("<")) {
+            return trimmed
+        }
+    }
+
+    return ""
+}
+
 // ============ CONTENT GENERATION ============
 export const generateContent = async (prompt, type = 'general') => {
     if (!NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY is missing in .env")
@@ -45,13 +115,20 @@ export const generateContent = async (prompt, type = 'general') => {
             })
         })
 
+        const { rawText, data } = await readApiResponse(response)
+
         if (!response.ok) {
-            const error = await response.json()
-            throw new Error(`NVIDIA API error (${response.status}): ${error.message || JSON.stringify(error)}`)
+            const message = getApiErrorMessage(data, rawText, "Failed to call NVIDIA content endpoint")
+            throw new Error(`NVIDIA API error (${response.status}): ${message}`)
         }
 
-        const data = await response.json()
-        return data.choices[0].message.content
+        const content = extractCompletionContent(data, rawText)
+        if (!content) {
+            const detail = getApiErrorMessage(data, rawText, "Empty completion content")
+            throw new Error(`NVIDIA API error: ${detail}`)
+        }
+
+        return content
     } catch (error) {
         console.error('Content generation error:', error)
         throw error
@@ -89,8 +166,9 @@ export const generateImage = async (prompt, model = 'text-to-image', numberOfIma
             )
 
             if (!response.ok) {
-                const error = await response.json()
-                throw new Error(`Image generation failed: ${error.message || JSON.stringify(error)}`)
+                const { rawText, data } = await readApiResponse(response)
+                const message = getApiErrorMessage(data, rawText, "Failed to call image endpoint")
+                throw new Error(`Image generation failed: ${message}`)
             }
 
             const blob = await response.blob()
@@ -145,13 +223,20 @@ export const generateResearch = async (query, type = 'movie-research') => {
             })
         })
 
+        const { rawText, data } = await readApiResponse(response)
+
         if (!response.ok) {
-            const error = await response.json()
-            throw new Error(`NVIDIA API error (${response.status}): ${error.message || JSON.stringify(error)}`)
+            const message = getApiErrorMessage(data, rawText, "Failed to call NVIDIA research endpoint")
+            throw new Error(`NVIDIA API error (${response.status}): ${message}`)
         }
 
-        const data = await response.json()
-        return data.choices[0].message.content
+        const content = extractCompletionContent(data, rawText)
+        if (!content) {
+            const detail = getApiErrorMessage(data, rawText, "Empty completion content")
+            throw new Error(`NVIDIA API error: ${detail}`)
+        }
+
+        return content
     } catch (error) {
         console.error('Research generation error:', error)
         throw error
@@ -160,10 +245,9 @@ export const generateResearch = async (query, type = 'movie-research') => {
 
 // ============ UTILITY FUNCTIONS ============
 const blobToBase64 = (blob) => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onloadend = () => resolve(reader.result)
-        reader.onerror = reject
-        reader.readAsDataURL(blob)
+    return blob.arrayBuffer().then((buffer) => {
+        const mimeType = blob.type || "image/png"
+        const base64 = Buffer.from(buffer).toString("base64")
+        return `data:${mimeType};base64,${base64}`
     })
 }

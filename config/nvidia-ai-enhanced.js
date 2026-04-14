@@ -7,7 +7,78 @@ const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 const NVIDIA_LLAMA_API_KEY = process.env.NVIDIA_LLAMA_API_KEY
 const NVIDIA_MISTRAL_API_KEY = process.env.NVIDIA_MISTRAL_API_KEY
 const NVIDIA_MIXTRAL_API_KEY = process.env.NVIDIA_MIXTRAL_API_KEY
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY
 const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY
+
+const parseJsonSafely = (rawText) => {
+    try {
+        return JSON.parse(rawText)
+    } catch {
+        return null
+    }
+}
+
+const readApiResponse = async (response) => {
+    const rawText = await response.text()
+    const data = parseJsonSafely(rawText)
+    return { rawText, data }
+}
+
+const getApiErrorMessage = (parsed, rawText, fallback = "Unknown provider error") => {
+    if (parsed?.error?.message) return parsed.error.message
+    if (typeof parsed?.error === "string") return parsed.error
+    if (parsed?.message) return parsed.message
+    if (rawText && rawText.trim()) return rawText.slice(0, 500)
+    return fallback
+}
+
+const extractContentFromSse = (rawText) => {
+    if (!rawText || typeof rawText !== "string") return ""
+    const lines = rawText.split("\n")
+    let fullContent = ""
+
+    for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith("data: ")) continue
+        const payload = trimmed.slice(6)
+        if (!payload || payload === "[DONE]") continue
+
+        const parsed = parseJsonSafely(payload)
+        if (!parsed) continue
+
+        const delta = parsed?.choices?.[0]?.delta?.content
+        const message = parsed?.choices?.[0]?.message?.content
+        const text = parsed?.choices?.[0]?.text
+        const content = delta || message || text || ""
+        if (content) fullContent += content
+    }
+
+    return fullContent.trim()
+}
+
+const extractCompletionContent = (data, rawText) => {
+    const jsonContent =
+        data?.choices?.[0]?.message?.content ||
+        data?.choices?.[0]?.text ||
+        data?.content ||
+        ""
+
+    if (typeof jsonContent === "string" && jsonContent.trim()) {
+        return jsonContent.trim()
+    }
+
+    const sseContent = extractContentFromSse(rawText)
+    if (sseContent) return sseContent
+
+    if (typeof rawText === "string") {
+        const trimmed = rawText.trim()
+        if (trimmed && !trimmed.startsWith("<")) {
+            return trimmed
+        }
+    }
+
+    return ""
+}
 
 // ============ MODEL CONFIGURATION ============
 const MODELS = {
@@ -20,12 +91,16 @@ const MODELS = {
 export const generateContent = async (prompt, type = 'general', model = 'llama-2-70b') => {
     // Select the appropriate API key based on model
     const isLlama = model === 'llama-2-70b' || !model || model.includes('llama')
-    const isMixtral = model === 'mixtral' || model.includes('mixtral')
+    const isMixtral = model === 'mixtral' || model === 'mixtral-8x7b' || model.includes('mixtral')
     
-    const apiKey = isMixtral ? NVIDIA_MIXTRAL_API_KEY : NVIDIA_LLAMA_API_KEY
+    const apiKey = isMixtral
+        ? (NVIDIA_MIXTRAL_API_KEY || NVIDIA_API_KEY)
+        : (NVIDIA_LLAMA_API_KEY || NVIDIA_API_KEY)
     
     if (!apiKey) {
-        const keyName = isMixtral ? 'NVIDIA_MIXTRAL_API_KEY' : 'NVIDIA_LLAMA_API_KEY'
+        const keyName = isMixtral
+            ? 'NVIDIA_MIXTRAL_API_KEY (or NVIDIA_API_KEY)'
+            : 'NVIDIA_LLAMA_API_KEY (or NVIDIA_API_KEY)'
         throw new Error(`${keyName} is missing in .env`)
     }
 
@@ -40,7 +115,7 @@ export const generateContent = async (prompt, type = 'general', model = 'llama-2
         'scene-description': `You are a cinematographer and director. Describe vivid, cinematic scenes with attention to lighting, camera angles, movement, and atmosphere. Make descriptions visual and evocative.`
     }
 
-    const selectedModel = model === 'mixtral' ? MODELS.MIXTRAL_8X7B : MODELS.LLAMA_2_70B
+    const selectedModel = isMixtral ? MODELS.MIXTRAL_8X7B : MODELS.LLAMA_2_70B
     const systemPrompt = systemPrompts[type] || systemPrompts['movie-description']
 
     try {
@@ -69,13 +144,17 @@ export const generateContent = async (prompt, type = 'general', model = 'llama-2
             })
         })
 
+        const { rawText, data } = await readApiResponse(response)
         if (!response.ok) {
-            const error = await response.json()
-            throw new Error(`NVIDIA API error (${response.status}): ${error.message || JSON.stringify(error)}`)
+            const message = getApiErrorMessage(data, rawText, "Failed to call NVIDIA content endpoint")
+            throw new Error(`NVIDIA API error (${response.status}): ${message}`)
         }
 
-        const data = await response.json()
-        const content = data.choices[0].message.content
+        const content = extractCompletionContent(data, rawText)
+        if (!content) {
+            const detail = getApiErrorMessage(data, rawText, "Empty completion content")
+            throw new Error(`NVIDIA API error: ${detail}`)
+        }
         
         return {
             content: content,
@@ -129,21 +208,23 @@ export const generateImage = async (prompt, model = 'text-to-image', numberOfIma
                     )
 
                     if (!response.ok) {
-                        const contentType = response.headers.get('content-type')
-                        if (contentType?.includes('application/json')) {
-                            const errorData = await response.json()
-                            if (errorData.error && errorData.error.includes('currently loading')) {
-                                retries++
-                                if (retries < maxRetries) {
-                                    console.log(`Model loading... retry ${retries}/${maxRetries}`)
-                                    await new Promise(resolve => setTimeout(resolve, 10000))
-                                    continue
-                                }
+                        const { rawText, data } = await readApiResponse(response)
+                        const errorMessage = getApiErrorMessage(
+                            data,
+                            rawText,
+                            `API returned status ${response.status}`
+                        )
+
+                        if (errorMessage.includes('currently loading')) {
+                            retries++
+                            if (retries < maxRetries) {
+                                console.log(`Model loading... retry ${retries}/${maxRetries}`)
+                                await new Promise(resolve => setTimeout(resolve, 10000))
+                                continue
                             }
-                            throw new Error(`Image generation failed: ${errorData.error || JSON.stringify(errorData)}`)
-                        } else {
-                            throw new Error(`API returned status ${response.status}`)
                         }
+
+                        throw new Error(`Image generation failed: ${errorMessage}`)
                     }
                     break
                 } catch (error) {
@@ -175,7 +256,8 @@ export const generateImage = async (prompt, model = 'text-to-image', numberOfIma
 
 // ============ RESEARCH GENERATION (Mistral 7B - Fast & Focused) ============
 export const generateResearch = async (query, type = 'movie-research', model = 'mistral-7b') => {
-    if (!NVIDIA_MISTRAL_API_KEY) throw new Error("NVIDIA_MISTRAL_API_KEY is missing in .env")
+    const apiKey = NVIDIA_MISTRAL_API_KEY || NVIDIA_API_KEY
+    if (!apiKey) throw new Error("NVIDIA_MISTRAL_API_KEY (or NVIDIA_API_KEY) is missing in .env")
 
     const systemPrompts = {
         'movie-research': `You are a film research specialist with access to vast entertainment databases. Provide thorough, well-researched information about movies. Format with clear sections and bullet points. Include production details, cast information, budget, box office, and cultural impact.`,
@@ -194,7 +276,7 @@ export const generateResearch = async (query, type = 'movie-research', model = '
         const response = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${NVIDIA_MISTRAL_API_KEY}`,
+                "Authorization": `Bearer ${apiKey}`,
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -216,13 +298,17 @@ export const generateResearch = async (query, type = 'movie-research', model = '
             })
         })
 
+        const { rawText, data } = await readApiResponse(response)
         if (!response.ok) {
-            const error = await response.json()
-            throw new Error(`NVIDIA API error (${response.status}): ${error.message || JSON.stringify(error)}`)
+            const message = getApiErrorMessage(data, rawText, "Failed to call NVIDIA research endpoint")
+            throw new Error(`NVIDIA API error (${response.status}): ${message}`)
         }
 
-        const data = await response.json()
-        const research = data.choices[0].message.content
+        const research = extractCompletionContent(data, rawText)
+        if (!research) {
+            const detail = getApiErrorMessage(data, rawText, "Empty completion content")
+            throw new Error(`NVIDIA API error: ${detail}`)
+        }
         
         return {
             content: research,
@@ -238,7 +324,8 @@ export const generateResearch = async (query, type = 'movie-research', model = '
 
 // ============ ADVANCED GENERATION (Mixtral 8x7B - Best Quality) ============
 export const generateAdvanced = async (prompt, type = 'advanced-content') => {
-    if (!NVIDIA_MIXTRAL_API_KEY) throw new Error("NVIDIA_MIXTRAL_API_KEY is missing in .env")
+    const apiKey = NVIDIA_MIXTRAL_API_KEY || NVIDIA_API_KEY
+    if (!apiKey) throw new Error("NVIDIA_MIXTRAL_API_KEY (or NVIDIA_API_KEY) is missing in .env")
 
     const systemPrompts = {
         'advanced-content': `You are a world-class creative writer with expertise in film, storytelling, and entertainment. Your task is to produce high-quality, sophisticated content that exceeds industry standards. Work at the highest level of creative excellence.`,
@@ -254,7 +341,7 @@ export const generateAdvanced = async (prompt, type = 'advanced-content') => {
         const response = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${NVIDIA_MIXTRAL_API_KEY}`,
+                "Authorization": `Bearer ${apiKey}`,
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -276,13 +363,17 @@ export const generateAdvanced = async (prompt, type = 'advanced-content') => {
             })
         })
 
+        const { rawText, data } = await readApiResponse(response)
         if (!response.ok) {
-            const error = await response.json()
-            throw new Error(`NVIDIA API error (${response.status}): ${error.message || JSON.stringify(error)}`)
+            const message = getApiErrorMessage(data, rawText, "Failed to call NVIDIA advanced endpoint")
+            throw new Error(`NVIDIA API error (${response.status}): ${message}`)
         }
 
-        const data = await response.json()
-        const content = data.choices[0].message.content
+        const content = extractCompletionContent(data, rawText)
+        if (!content) {
+            const detail = getApiErrorMessage(data, rawText, "Empty completion content")
+            throw new Error(`NVIDIA API error: ${detail}`)
+        }
         
         return {
             content: content,
@@ -299,11 +390,10 @@ export const generateAdvanced = async (prompt, type = 'advanced-content') => {
 
 // ============ UTILITY FUNCTIONS ============
 const blobToBase64 = (blob) => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onloadend = () => resolve(reader.result)
-        reader.onerror = reject
-        reader.readAsDataURL(blob)
+    return blob.arrayBuffer().then((buffer) => {
+        const mimeType = blob.type || "image/png"
+        const base64 = Buffer.from(buffer).toString("base64")
+        return `data:${mimeType};base64,${base64}`
     })
 }
 

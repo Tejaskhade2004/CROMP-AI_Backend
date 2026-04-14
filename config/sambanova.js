@@ -5,7 +5,7 @@ const SAMBANOVA_API_KEY = process.env.SAMBANOVA_API_KEY
 const SAMBANOVA_BASE_URL = process.env.SAMBANOVA_BASE_URL || "https://api.sambanova.ai/v1/chat/completions"
 const defaultModel = process.env.SAMBANOVA_DEFAULT_MODEL || "DeepSeek-R1"
 
-export const generateResponse = async (prompt, modelOverride = defaultModel) => {
+export const generateResponse = async (prompt, modelOverride = defaultModel, options = {}) => {
     if (!SAMBANOVA_API_KEY) throw new Error("SAMBANOVA_API_KEY is missing in .env")
 
     const response = await fetch(SAMBANOVA_BASE_URL, {
@@ -28,7 +28,7 @@ export const generateResponse = async (prompt, modelOverride = defaultModel) => 
                 }
             ],
             temperature: 0.2,
-            max_tokens: 16384
+            max_tokens: options.maxTokens || 16384
         })
     })
 

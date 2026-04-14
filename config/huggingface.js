@@ -7,7 +7,7 @@ const HUGGINGFACE_BASE_URL =
 const defaultModel =
     process.env.HUGGINGFACE_DEFAULT_MODEL || "Qwen/Qwen2.5-Coder-32B-Instruct"
 
-export const generateResponse = async (prompt, modelOverride = defaultModel) => {
+export const generateResponse = async (prompt, modelOverride = defaultModel, options = {}) => {
     if (!HUGGINGFACE_API_KEY) throw new Error("HUGGINGFACE_API_KEY is missing in .env")
 
     const response = await fetch(HUGGINGFACE_BASE_URL, {
@@ -30,7 +30,7 @@ export const generateResponse = async (prompt, modelOverride = defaultModel) => 
                 }
             ],
             temperature: 0.2,
-            max_tokens: 16384
+            max_tokens: options.maxTokens || 16384
         })
     })
 

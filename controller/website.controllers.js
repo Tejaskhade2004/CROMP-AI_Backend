@@ -1,21 +1,23 @@
 import { raw } from "express";
 import mongoose from "mongoose";
 import Website from "../models/Website.model.js";
-import { generateResponse as generateGeminiResponse } from "../config/gemini.js";
-import { generateResponse as generateOpenRouterResponse } from "../config/openrouter.js";
 import { generateResponse as generateHuggingFaceResponse } from "../config/huggingface.js";
-import { generateResponse as generateCloudflareResponse } from "../config/cloudflare.js";
 import { generateResponse as generateMistralResponse } from "../config/mistral.js";
 import { generateResponse as generateGroqResponse } from "../config/groq.js";
-import { generateResponse as generateCerebrasResponse } from "../config/cerebras.js";
 import { generateResponse as generateSambanovaResponse } from "../config/sambanova.js";
-import { generateResponse as generateGitHubModelsResponse } from "../config/github-models.js";
+import { generateResponse as generateAiccResponse } from "../config/aicc.js";
 import extractJson from "../utils/ExtractJson.js";
 import User from "../models/user.model.js";
+import {
+    CODING_MODELS,
+    DEFAULT_CODING_MODEL,
+    resolveCodingModel,
+    resolveCodingMaxTokens
+} from "../config/model-catalog.js";
 
-// Credit costs (set to 0 for unrestricted generation during testing)
-const GENERATE_COST = 0;
-const UPDATE_COST = 0;
+// Credit costs are configurable via env and default to production-safe non-zero values.
+const GENERATE_COST = Number(process.env.GENERATE_WEBSITE_CREDIT_COST || 10);
+const UPDATE_COST = Number(process.env.UPDATE_WEBSITE_CREDIT_COST || 3);
 
 const masterPrompt = `
 YOU ARE A PRINCIPAL FRONTEND ARCHITECT
@@ -179,93 +181,31 @@ const createSlug = (title = "website") => {
     return `${safeBase}-${uniquePart}`;
 }
 
-const WEBSITE_GENERATION_MODELS = {
-    "gemini-2.5-flash": {
-        provider: "gemini",
-        model: "gemini-2.5-flash",
-        label: "Google Gemini 2.5 Flash"
-    },
-    "nvidia/nemotron-3-super-120b-a12b:free": {
-        provider: "openrouter",
-        model: "nvidia/nemotron-3-super-120b-a12b:free",
-        label: "NVIDIA Nemotron 3 Super (Free)"
-    },
-    "minimax/minimax-m2.5:free": {
-        provider: "openrouter",
-        model: "minimax/minimax-m2.5:free",
-        label: "MiniMax M2.5 (Free)"
-    },
-    "z-ai/glm-4.5-air:free": {
-        provider: "openrouter",
-        model: "z-ai/glm-4.5-air:free",
-        label: "Z.ai GLM 4.5 Air (Free)"
-    },
-    "stepfun/step-3.5-flash:free": {
-        provider: "openrouter",
-        model: "stepfun/step-3.5-flash:free",
-        label: "StepFun 3.5 Flash (Free)"
-    },
-    "hf/qwen2.5-coder-32b": {
-        provider: "huggingface",
-        model: "Qwen/Qwen2.5-Coder-32B-Instruct",
-        label: "HuggingFace Qwen2.5 Coder 32B"
-    },
-    "cf/llama-3.1-8b": {
-        provider: "cloudflare",
-        model: "@cf/meta/llama-3.1-8b-instruct",
-        label: "Cloudflare Workers AI Llama 3.1 8B"
-    },
-    "mistral/codestral-latest": {
-        provider: "mistral",
-        model: "codestral-latest",
-        label: "Mistral Codestral Latest"
-    },
-    "groq/llama-3.1-8b-instant": {
-        provider: "groq",
-        model: "llama-3.1-8b-instant",
-        label: "Groq Llama 3.1 8B Instant"
-    },
-    "cerebras/llama3.3-70b": {
-        provider: "cerebras",
-        model: "llama3.3-70b",
-        label: "Cerebras Llama 3.3 70B"
-    },
-    "sambanova/deepseek-r1": {
-        provider: "sambanova",
-        model: "DeepSeek-R1",
-        label: "Sambanova DeepSeek R1"
-    },
-    "github/gpt-4o-mini": {
-        provider: "github-models",
-        model: "gpt-4o-mini",
-        label: "GitHub Models GPT-4o-mini"
+const WEBSITE_GENERATION_MODELS = CODING_MODELS.reduce((acc, model) => {
+    acc[model.id] = {
+        provider: model.provider,
+        model: model.upstreamModel,
+        label: model.label
     }
-}
+    return acc
+}, {})
 
-const DEFAULT_GENERATION_MODEL = Object.prototype.hasOwnProperty.call(
-    WEBSITE_GENERATION_MODELS,
-    process.env.DEFAULT_GENERATION_MODEL || ""
-)
-    ? process.env.DEFAULT_GENERATION_MODEL
-    : "gemini-2.5-flash"
+const DEFAULT_GENERATION_MODEL = DEFAULT_CODING_MODEL
 
-const resolveSelectedModel = (requestedModel) => {
-    if (requestedModel && WEBSITE_GENERATION_MODELS[requestedModel]) {
-        return requestedModel
-    }
-    return DEFAULT_GENERATION_MODEL
-}
+const resolveSelectedModel = (requestedModel) => resolveCodingModel(requestedModel)
 
-const generateWithSelectedModel = async (prompt, selectedModel) => {
+const generateWithSelectedModel = async (prompt, selectedModel, maxTokens) => {
     const resolvedModel = resolveSelectedModel(selectedModel)
     const modelConfig = WEBSITE_GENERATION_MODELS[resolvedModel]
+    const resolvedMaxTokens = resolveCodingMaxTokens(resolvedModel, maxTokens)
+    const requestOptions = { maxTokens: resolvedMaxTokens }
 
     if (modelConfig.provider === "openrouter") {
-        return generateOpenRouterResponse(prompt, modelConfig.model)
+        return generateOpenRouterResponse(prompt, modelConfig.model, requestOptions)
     }
 
     if (modelConfig.provider === "huggingface") {
-        return generateHuggingFaceResponse(prompt, modelConfig.model)
+        return generateHuggingFaceResponse(prompt, modelConfig.model, requestOptions)
     }
 
     if (modelConfig.provider === "cloudflare") {
@@ -273,26 +213,30 @@ const generateWithSelectedModel = async (prompt, selectedModel) => {
     }
 
     if (modelConfig.provider === "mistral") {
-        return generateMistralResponse(prompt, modelConfig.model)
-    }
-
-    if (modelConfig.provider === "groq") {
-        return generateGroqResponse(prompt, modelConfig.model)
-    }
-
-    if (modelConfig.provider === "cerebras") {
-        return generateCerebrasResponse(prompt, modelConfig.model)
+        return generateMistralResponse(prompt, modelConfig.model, requestOptions)
     }
 
     if (modelConfig.provider === "sambanova") {
-        return generateSambanovaResponse(prompt, modelConfig.model)
+        return generateSambanovaResponse(prompt, modelConfig.model, requestOptions)
     }
 
-    if (modelConfig.provider === "github-models") {
-        return generateGitHubModelsResponse(prompt, modelConfig.model)
+    if (modelConfig.provider === "aicc") {
+        return generateAiccResponse(prompt, modelConfig.model, requestOptions)
     }
 
-    return generateGeminiResponse(prompt, modelConfig.model)
+    if (modelConfig.provider === "groq") {
+        return generateGroqResponse(prompt, modelConfig.model, requestOptions)
+    }
+
+    return generateAiccResponse(prompt, "gpt-4o-mini", requestOptions)
+}
+
+const getUpdateModel = (req) => {
+    const { model } = req.body
+    if (model && WEBSITE_GENERATION_MODELS[model]) {
+        return model
+    }
+    return DEFAULT_GENERATION_MODEL
 }
 
 // Keep existing helper usage untouched in legacy paths.
@@ -300,9 +244,12 @@ const generateResponse = (prompt) => generateGeminiResponse(prompt)
 
 export const generateWebsite = async (req, res) => {
     try {
-        const { prompt, model } = req.body
+        const { prompt, model, maxTokens } = req.body
         if (!prompt) return res.status(400).json({ message: "Prompt is required" })
         if (!req.user?._id) return res.status(401).json({ message: "Unauthorized" })
+        if (req.app?.locals?.dbReady === false) {
+            return res.status(503).json({ message: "Database is not connected. Please retry in a few seconds." })
+        }
 
         const user = await User.findById(req.user._id)
         if (!user) return res.status(401).json({ message: "Unauthorized" })
@@ -311,26 +258,34 @@ export const generateWebsite = async (req, res) => {
 
         const finalPrompt = masterPrompt.replace("{USER_PROMPT}", prompt)
         const selectedModel = resolveSelectedModel(model)
-        let result = ""
-        let parse = null
-        result = await generateWithSelectedModel(finalPrompt, selectedModel)
-        let rawResponse = result
-        parse = extractJson(result)
-        for (let i = 0; i < 2 && !parse; i++) {
-            rawResponse = await generateWithSelectedModel(finalPrompt, selectedModel)
-            parse = extractJson(rawResponse)
-            if (!parse) {
-                rawResponse = await generateWithSelectedModel(
-                    finalPrompt + "\n\nREMEMBER TO FOLLOW THE OUTPUT FORMAT AND RETURN RAW JSON ONLY",
-                    selectedModel
-                )
-                parse = extractJson(rawResponse)
-            }
+        let rawResponse = await generateWithSelectedModel(finalPrompt, selectedModel, maxTokens)
+        let parse = parseWebsitePayload(rawResponse)
+
+        const retryMessages = [
+            "\n\nREMEMBER TO FOLLOW THE OUTPUT FORMAT AND RETURN RAW JSON ONLY.",
+            "\n\nOUTPUT MUST BE RAW JSON WITH KEYS message AND code.",
+            "\n\nIf JSON fails, still return full HTML document in the code field."
+        ]
+
+        for (let i = 0; i < retryMessages.length && !parse; i++) {
+            rawResponse = await generateWithSelectedModel(finalPrompt, selectedModel, maxTokens)
+            parse = parseWebsitePayload(rawResponse)
+            if (parse) break
+
+            rawResponse = await generateWithSelectedModel(
+                finalPrompt + retryMessages[i],
+                selectedModel,
+                maxTokens
+            )
+            parse = parseWebsitePayload(rawResponse)
         }
 
         if (!parse?.code) {
-            console.log("Failed to parse JSON:", rawResponse);
-            return res.status(500).json({ message: "Failed to generate website. Please try again." })
+            console.error("Failed to parse website payload:", rawResponse?.slice?.(0, 1200))
+            return res.status(500).json({
+                message: "Failed to generate website. The model returned malformed output. Please try again or switch model.",
+                details: rawResponse?.slice?.(0, 800)
+            })
         }
 
         const website = await Website.create({
@@ -360,12 +315,16 @@ export const generateWebsite = async (req, res) => {
             message: "Website generated successfully",
             websiteId: website._id,
             model: selectedModel,
-            Remaining_credits: user.credits
+            Remaining_credits: user.credits,
+            usedCredits: GENERATE_COST
         })
 
 
 
     } catch (error) {
+        if ((error?.message || "").includes("Database is not connected")) {
+            return res.status(503).json({ message: "Database is not connected. Please retry in a few seconds." })
+        }
         return res.status(500).json({ message: `Internal server error: ${error.message}` })
     }
 }
@@ -470,15 +429,28 @@ const parseWebsitePayload = (rawText) => {
 export const generateWebsiteChanges = async (req, res) => {
     try {
         const { id } = req.params
-        const { prompt } = req.body
+        const { prompt, maxTokens } = req.body
 
         if (!id) return res.status(400).json({ message: "Website ID is required" })
         if (!prompt) return res.status(400).json({ message: "Prompt is required" })
         if (!req.user?._id) return res.status(401).json({ message: "Unauthorized" })
+        if (req.app?.locals?.dbReady === false) {
+            return res.status(503).json({ message: "Database is not connected. Please retry in a few seconds." })
+        }
         if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid website id" })
 
         const website = await Website.findOne({ _id: id, user: req.user._id })
         if (!website) return res.status(404).json({ message: "Website not found" })
+
+        const user = await User.findById(req.user._id)
+        if (!user) return res.status(401).json({ message: "Unauthorized" })
+        if (user.credits < UPDATE_COST) {
+            return res.status(403).json({
+                message: "Insufficient credits",
+                requiredCredits: UPDATE_COST,
+                availableCredits: user.credits
+            })
+        }
 
         const updatePrompt = `
 You are editing an existing website.
@@ -495,7 +467,8 @@ Requested Changes:
 ${prompt}
 `
 
-        let rawResponse = await generateResponse(updatePrompt)
+        const selectedModel = getUpdateModel(req)
+        let rawResponse = await generateWithSelectedModel(updatePrompt, selectedModel, maxTokens)
         let parsed = parseWebsitePayload(rawResponse)
 
         // Retry logic for malformed output
@@ -506,7 +479,7 @@ ${prompt}
         ]
 
         for (let i = 0; i < retryMessages.length && !parsed; i++) {
-            rawResponse = await generateResponse(updatePrompt + retryMessages[i])
+            rawResponse = await generateWithSelectedModel(updatePrompt + retryMessages[i], selectedModel, maxTokens)
             parsed = parseWebsitePayload(rawResponse)
         }
 
@@ -525,10 +498,14 @@ ${prompt}
         )
         await website.save()
 
+        user.credits = Math.max(0, user.credits - UPDATE_COST)
+        await user.save()
+
         return res.status(200).json({
             message: "Website updated successfully",
             websiteId: website._id,
-            latestCode: website.latestCode
+            latestCode: website.latestCode,
+            Remaining_credits: user.credits
         })
     } catch (error) {
         const errorMessage = error?.message || "Unknown error"
@@ -699,5 +676,4 @@ export const getDeployedWebsiteBySlug = async (req, res) => {
         return res.status(500).json({ message: `Get deployed website error: ${error.message}` })
     }
 }
-
 

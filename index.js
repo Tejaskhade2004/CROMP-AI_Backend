@@ -2,6 +2,7 @@ import express from "express"
 import dotenv from "dotenv"
 dotenv.config()
 import connectdb from "./config/db.js"
+import mongoose from "mongoose"
 import authRouter from "./routes/auth.routes.js"
 import cookieParser from "cookie-parser"
 import cors from "cors"
@@ -11,6 +12,7 @@ import AIRouter from "./routes/ai.routes.js"
 
 
 const app=express()
+app.locals.dbReady = false
 app.use(express.json())
 app.use(cookieParser())
 
@@ -38,7 +40,6 @@ app.use(cors({
 // Fix Firebase COOP warning
 app.use((req, res, next) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups')
-    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
     next()
 })
 app.use("/api/auth",authRouter)
@@ -46,8 +47,28 @@ app.use("/api/user",UserRouter)
 app.use("/api/website",WebsiteRouter)
 app.use("/api/ai",AIRouter)
 
-app.listen(process.env.PORT || 5000,()=>{
-    console.log("Server running...");
-    connectdb()
-    
-})
+const startServer = async () => {
+    try {
+        await connectdb()
+        app.locals.dbReady = true
+
+        mongoose.connection.on("disconnected", () => {
+            app.locals.dbReady = false
+            console.warn("MongoDB disconnected")
+        })
+
+        mongoose.connection.on("connected", () => {
+            app.locals.dbReady = true
+        })
+
+        const port = process.env.PORT || 5000
+        app.listen(port, () => {
+            console.log(`Server running on port ${port}`)
+        })
+    } catch (error) {
+        console.error("Server startup failed:", error.message)
+        process.exit(1)
+    }
+}
+
+startServer()

@@ -1,5 +1,5 @@
 import express from "express"
-import { generateContentController, generateImageController, generateResearchController, generateAdvancedController, getModelsController } from "../controller/ai.controllers-enhanced.js"
+import { generateContentController, generateResearchController, generateAdvancedController, getModelsController, getModelConfigController, chatController, generateImageController } from "../controller/ai.controllers-enhanced.js"
 import isAuth from "../middlewares/isAuth.js"
 
 const router = express.Router()
@@ -7,8 +7,7 @@ const router = express.Router()
 // Health Check - No auth required
 router.get('/health', (req, res) => {
     const apiKeysStatus = {
-        nvidia: !!process.env.NVIDIA_API_KEY,
-        huggingface: !!process.env.HUGGINGFACE_API_KEY,
+        aicc: !!process.env.AICC_API_KEY,
         environment: process.env.NODE_ENV
     }
     res.json({ 
@@ -18,9 +17,18 @@ router.get('/health', (req, res) => {
     })
 })
 
-// Content Generation Route - Optional Auth (works with or without login)
+// Chat Route - Stream responses like ChatGPT/DeepSeek
+router.post('/chat', (req, res, next) => {
+    const token = req.cookies.token
+    if (token) {
+        isAuth(req, res, () => chatController(req, res))
+    } else {
+        chatController(req, res)
+    }
+})
+
+// Content Generation Route - Optional Auth
 router.post('/generate-content', (req, res, next) => {
-    // Try to authenticate but don't fail if no token
     const token = req.cookies.token
     if (token) {
         isAuth(req, res, () => generateContentController(req, res))
@@ -61,5 +69,6 @@ router.post('/generate-advanced', (req, res, next) => {
 
 // Get Available Models - No auth required
 router.get('/models', getModelsController)
+router.get('/model-config', getModelConfigController)
 
 export default router

@@ -3,10 +3,13 @@ import jwt from "jsonwebtoken"
 
 const setAuthCookie = (res, userId) => {
     const token = jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "7d" })
+    const isProduction = process.env.NODE_ENV === "production"
+    const isLocalhost = !process.env.FRONTEND_URL || process.env.FRONTEND_URL.includes("localhost")
+    
     res.cookie("token", token, {
         httpOnly: true,
-        secure: true,
-        sameSite: "none",
+        secure: isProduction && !isLocalhost,
+        sameSite: isLocalhost ? "lax" : "none",
         path: "/",
         maxAge: 7 * 24 * 60 * 60 * 1000
     })
@@ -14,6 +17,12 @@ const setAuthCookie = (res, userId) => {
 
 export const googleAuth = async (req, res) => {
     try {
+        if (req.app?.locals?.dbReady === false) {
+            return res.status(503).json({
+                message: "Authentication service unavailable. Database is not connected."
+            })
+        }
+
         const { name, email, avatar } = req.body
         if (!email) {
             return res.status(400).json({
@@ -39,6 +48,12 @@ export const googleAuth = async (req, res) => {
 
 export const manualAuth = async (req, res) => {
     try {
+        if (req.app?.locals?.dbReady === false) {
+            return res.status(503).json({
+                message: "Authentication service unavailable. Database is not connected."
+            })
+        }
+
         const { email, name, avatar } = req.body
         if (!email) {
             return res.status(400).json({ message: "Email is required" })
@@ -60,10 +75,14 @@ export const manualAuth = async (req, res) => {
 
 export const logOut = async (req, res) => {
     try {
+        const isProduction = process.env.NODE_ENV === "production"
+        const isLocalhost = !process.env.FRONTEND_URL || process.env.FRONTEND_URL.includes("localhost")
+        
         res.clearCookie("token", {
             httpOnly: true,
-            secure: true,
-            sameSite: "none"
+            secure: isProduction && !isLocalhost,
+            sameSite: isLocalhost ? "lax" : "none",
+            path: "/"
         })
         return res.status(200).json({
             message: "Logout Success"
