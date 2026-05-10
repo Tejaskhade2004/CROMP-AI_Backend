@@ -3,9 +3,11 @@ import mongoose from "mongoose";
 import Website from "../models/Website.model.js";
 import { generateResponse as generateHuggingFaceResponse } from "../config/huggingface.js";
 import { generateResponse as generateMistralResponse } from "../config/mistral.js";
+import { generateResponse as generateOpenRouterResponse } from "../config/openrouter.js";
 import { generateResponse as generateGroqResponse } from "../config/groq.js";
 import { generateResponse as generateSambanovaResponse } from "../config/sambanova.js";
 import { generateResponse as generateAiccResponse } from "../config/aicc.js";
+import { generateResponse as generateGeminiResponse } from "../config/gemini.js";
 import extractJson from "../utils/ExtractJson.js";
 import User from "../models/user.model.js";
 import {
@@ -228,6 +230,10 @@ const generateWithSelectedModel = async (prompt, selectedModel, maxTokens) => {
         return generateGroqResponse(prompt, modelConfig.model, requestOptions)
     }
 
+    if (modelConfig.provider === "gemini") {
+        return generateGeminiResponse(prompt, modelConfig.model, requestOptions)
+    }
+
     return generateAiccResponse(prompt, "gpt-4o-mini", requestOptions)
 }
 
@@ -374,6 +380,62 @@ const extractHtmlFromText = (text) => {
     return text.slice(start, end + "</html>".length)
 }
 
+const extractSeparateCodeBlocks = (text) => {
+    if (!text) return null
+
+    // Extract HTML code block
+    const htmlMatch = text.match(/```html\s*([\s\S]*?)```/) || 
+                      text.match(/```\s*<!DOCTYPE[\s\S]*?```/) ||
+                      text.match(/<!DOCTYPE[\s\S]*?<\/html>/i)
+    
+    // Extract CSS code block
+    const cssMatch = text.match(/```css\s*([\s\S]*?)```/)
+    
+    // Extract JavaScript code block
+    const jsMatch = text.match(/```(?:javascript|js)\s*([\s\S]*?)```/)
+
+    if (!htmlMatch) return null
+
+    let htmlContent = htmlMatch[1] || htmlMatch[0]
+    if (htmlMatch[0].includes('```')) {
+        htmlContent = htmlMatch[1] || htmlMatch[0].replace(/```/g, '')
+    }
+
+    // If HTML doesn't have a closing tag, it's incomplete
+    if (!htmlContent.toLowerCase().includes('</html>')) {
+        return null
+    }
+
+    // If there are separate CSS and JS blocks, we need to inject them into the HTML
+    if (cssMatch || jsMatch) {
+        const cssContent = cssMatch ? cssMatch[1] : ''
+        const jsContent = jsMatch ? jsMatch[1] : ''
+
+        // Inject CSS and JS into the HTML if they're not already there
+        let finalHtml = htmlContent
+
+        // Add CSS to head if not already there
+        if (cssContent && !finalHtml.includes('<style>')) {
+            finalHtml = finalHtml.replace(
+                /<\/head>/i,
+                `<style>\n${cssContent}\n</style>\n</head>`
+            )
+        }
+
+        // Add JS before closing body if not already there
+        if (jsContent && !finalHtml.includes('<script>')) {
+            finalHtml = finalHtml.replace(
+                /<\/body>/i,
+                `<script>\n${jsContent}\n</script>\n</body>`
+            )
+        }
+
+        return finalHtml
+    }
+
+    return htmlContent
+}
+
 const normalizeModelOutput = (text) => {
     if (!text || typeof text !== "string") return ""
 
@@ -414,12 +476,21 @@ const parseWebsitePayload = (rawText) => {
         }
     }
 
-    // Fallback: sometimes output is direct HTML (no JSON)
+    // Fallback 1: sometimes output is direct HTML (no JSON)
     const html = extractHtmlFromText(rawText) || extractHtmlFromText(normalizedText)
     if (html) {
         return {
             message: "Website updated successfully",
             code: html
+        }
+    }
+
+    // Fallback 2: Gemini returns separate code blocks (HTML, CSS, JS)
+    const separateBlocks = extractSeparateCodeBlocks(rawText) || extractSeparateCodeBlocks(normalizedText)
+    if (separateBlocks) {
+        return {
+            message: "Website updated successfully",
+            code: separateBlocks
         }
     }
 

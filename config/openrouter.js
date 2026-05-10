@@ -73,3 +73,65 @@ export const generateResponse = async (prompt, modelOverride, options = {}) => {
 
 
 }
+
+export const generateChatResponse = async (messages = [], modelOverride, options = {}) => {
+    if (!openrouterApiKey) throw new Error("OPENROUTERAPI is missing in .env");
+    const modelToUse = modelOverride || model
+
+    const safeMessages = Array.isArray(messages)
+        ? messages
+            .map((message) => ({
+                role: message?.role,
+                content: typeof message?.content === "string" ? message.content : ""
+            }))
+            .filter((message) => ["system", "user", "assistant"].includes(message.role) && message.content)
+        : []
+
+    if (safeMessages.length === 0) {
+        throw new Error("OpenRouter chat error: messages are required")
+    }
+
+    const sendRequest = async (withProvider = true) => fetch(openrouterUrl, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${openrouterApiKey}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            model: modelToUse,
+            messages: safeMessages,
+            temperature: 0.7,
+            max_tokens: options.maxTokens || 4096,
+            ...(withProvider ? {
+                provider: {
+                    order: providerOrder,
+                    allow_fallbacks: true
+                }
+            } : {})
+        })
+    })
+
+    let response = await sendRequest(true)
+    if (!response.ok) {
+        const err = await response.text()
+        const providerRoutingError = err.includes("No allowed providers are available for the selected model")
+
+        if (providerRoutingError) {
+            response = await sendRequest(false)
+            if (!response.ok) {
+                const retryError = await response.text()
+                throw new Error("OpenRouter API error" + retryError)
+            }
+        } else {
+            throw new Error("OpenRouter API error" + err)
+        }
+    }
+
+    const data = await response.json()
+    const content = data?.choices?.[0]?.message?.content
+    if (!content) {
+        throw new Error("OpenRouter API error: empty completion content")
+    }
+
+    return content
+}

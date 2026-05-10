@@ -1,6 +1,8 @@
 import dotenv from "dotenv"
 import { generateChatResponse as generateMistralChatResponse } from "./mistral.js"
-import { getUnifiedModelCatalog } from "./model-catalog.js"
+import { generateChatResponse as generateOpenRouterChatResponse } from "./openrouter.js"
+import { generateChatResponse as generateGeminiChatResponse } from "./gemini.js"
+import { getChatModelProvider, getUnifiedModelCatalog } from "./model-catalog.js"
 dotenv.config()
 
 const AICC_API_KEY = process.env.AICC_API_KEY
@@ -10,6 +12,8 @@ const AICC_CHAT_FALLBACK_MODEL = process.env.AICC_CHAT_FALLBACK_MODEL || "mistra
 const DEFAULT_TEXT_MODEL = process.env.AICC_TEXT_MODEL || "gpt-4o-mini"
 
 const isMistralModel = (model) => typeof model === "string" && model.startsWith("mistral/")
+
+const isGeminiModel = (model) => typeof model === "string" && model.startsWith("gemini/")
 
 const parseJsonSafely = (value) => {
     try {
@@ -261,9 +265,47 @@ export const generateAdvanced = async (prompt, type = "advanced-content", model 
 
 export const generateChatStream = async (messages, model = DEFAULT_TEXT_MODEL, onChunk, maxTokens = 4096) => {
     const formattedMessages = normalizeChatMessages(messages)
+    const modelProvider = getChatModelProvider(model)
+
+    if (modelProvider === "openrouter") {
+        const outputText = await generateOpenRouterChatResponse(formattedMessages, model, {
+            maxTokens
+        })
+
+        if (onChunk && outputText) {
+            const chars = outputText.split('')
+            for (let i = 0; i < chars.length; i++) {
+                onChunk(chars[i])
+                if (i % 3 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 10))
+                }
+            }
+        }
+
+        return { model, content: outputText }
+    }
 
     if (isMistralModel(model)) {
         const outputText = await generateMistralChatResponse(formattedMessages, model, {
+            temperature: 0.7,
+            max_tokens: maxTokens
+        })
+
+        if (onChunk && outputText) {
+            const chars = outputText.split('')
+            for (let i = 0; i < chars.length; i++) {
+                onChunk(chars[i])
+                if (i % 3 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 10))
+                }
+            }
+        }
+
+        return { model: model, content: outputText }
+    }
+
+    if (isGeminiModel(model)) {
+        const outputText = await generateGeminiChatResponse(formattedMessages, model, {
             temperature: 0.7,
             max_tokens: maxTokens
         })

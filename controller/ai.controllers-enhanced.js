@@ -22,6 +22,14 @@ const normalizeControllerErrorMessage = (error, fallback) => {
     return message
 }
 
+const CROMP_CHAT_SYSTEM_PROMPT = [
+    "You are CROMP.AI Assistant inside the CROMP platform.",
+    "Do not claim to be a different branded assistant or architecture.",
+    "If user asks who you are, say you are CROMP.AI Assistant powered by the currently selected model.",
+    "Provide clear plain-text responses unless the user asks for markdown.",
+    "Use fenced code blocks only when returning code."
+].join(" ")
+
 // ============ CONTENT GENERATION ============
 export const generateContentController = async (req, res) => {
     try {
@@ -223,6 +231,11 @@ export const chatController = async (req, res) => {
             }
         }
 
+        const safeMessages = [
+            { role: "system", content: CROMP_CHAT_SYSTEM_PROMPT },
+            ...messages.filter((message) => message?.role !== "system")
+        ]
+
         const resolvedModel = resolveChatModel(model)
         const resolvedMaxTokens = resolveChatMaxTokens(resolvedModel, maxTokens)
 
@@ -231,7 +244,7 @@ export const chatController = async (req, res) => {
         res.setHeader('Connection', 'keep-alive')
         res.setHeader('X-Accel-Buffering', 'no')
 
-        const result = await generateChatStream(messages, resolvedModel, (chunk) => {
+        const result = await generateChatStream(safeMessages, resolvedModel, (chunk) => {
             res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`)
         }, resolvedMaxTokens)
 

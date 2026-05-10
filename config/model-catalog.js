@@ -1,5 +1,29 @@
 export const CHAT_MODELS = [
     {
+        id: "auto",
+        label: "Auto (Best from CROMP Config)",
+        provider: "internal",
+        defaultMaxTokens: 4096,
+        minMaxTokens: 512,
+        maxMaxTokens: 8192
+    },
+    {
+        id: "openrouter/free",
+        label: "OpenRouter Free (Auto)",
+        provider: "openrouter",
+        defaultMaxTokens: 4096,
+        minMaxTokens: 512,
+        maxMaxTokens: 8192
+    },
+    {
+        id: "openai/gpt-oss-120b:free",
+        label: "GPT-OSS 120B Free",
+        provider: "openrouter",
+        defaultMaxTokens: 4096,
+        minMaxTokens: 512,
+        maxMaxTokens: 8192
+    },
+    {
         id: "mistral/codestral-latest",
         label: "Mistral Codestral",
         provider: "mistral",
@@ -22,16 +46,52 @@ export const CHAT_MODELS = [
         defaultMaxTokens: 4096,
         minMaxTokens: 512,
         maxMaxTokens: 8192
+    },
+    {
+        id: "gemini/gemma-4-26b-a4b-it",
+        label: "Google Gemma-4 26B",
+        provider: "gemini",
+        defaultMaxTokens: 4096,
+        minMaxTokens: 512,
+        maxMaxTokens: 8192
+    },
+    {
+        id: "gemini/gemini-2.5-flash",
+        label: "Google Gemini 2.5 Flash",
+        provider: "gemini",
+        defaultMaxTokens: 4096,
+        minMaxTokens: 512,
+        maxMaxTokens: 8192
     }
 ]
 
 export const CODING_MODELS = [
     {
+        id: "auto",
+        label: "auto",
+        provider: "internal",
+        providerNote: "Auto",
+        upstreamModel: "openrouter/free",
+        defaultMaxTokens: 8192,
+        minMaxTokens: 1024,
+        maxMaxTokens: 16384
+    },
+    {
         id: "openrouter/free",
-        label: "OpenRouter Free (Trinity Large)",
+        label: "openrouter:free",
         provider: "openrouter",
         providerNote: "Free",
         upstreamModel: "openrouter/free",
+        defaultMaxTokens: 8192,
+        minMaxTokens: 1024,
+        maxMaxTokens: 16384
+    },
+    {
+        id: "openai/gpt-oss-120b:free",
+        label: "GPT-OSS 120B Free",
+        provider: "openrouter",
+        providerNote: "OpenRouter",
+        upstreamModel: "openai/gpt-oss-120b:free",
         defaultMaxTokens: 8192,
         minMaxTokens: 1024,
         maxMaxTokens: 16384
@@ -105,6 +165,26 @@ export const CODING_MODELS = [
         defaultMaxTokens: 8192,
         minMaxTokens: 1024,
         maxMaxTokens: 16384
+    },
+    {
+        id: "gemini/gemma-4-26b-a4b-it",
+        label: "Google Gemma-4 26B",
+        provider: "gemini",
+        providerNote: "Google",
+        upstreamModel: "gemma-4-26b-a4b-it",
+        defaultMaxTokens: 8192,
+        minMaxTokens: 1024,
+        maxMaxTokens: 16384
+    },
+    {
+        id: "gemini/gemini-2.5-flash",
+        label: "Google Gemini 2.5 Flash",
+        provider: "gemini",
+        providerNote: "Google",
+        upstreamModel: "gemini-2.5-flash",
+        defaultMaxTokens: 8192,
+        minMaxTokens: 1024,
+        maxMaxTokens: 16384
     }
 ]
 
@@ -120,21 +200,43 @@ const toMap = (models) => {
 export const CHAT_MODELS_MAP = toMap(CHAT_MODELS)
 export const CODING_MODELS_MAP = toMap(CODING_MODELS)
 
-export const DEFAULT_CHAT_MODEL = "mistral/magistral-medium-latest"
-export const DEFAULT_CODING_MODEL = "gpt-4o-mini"
+export const DEFAULT_CHAT_MODEL = "auto"
+export const DEFAULT_CODING_MODEL = "auto"
+
+const AUTO_CHAT_TARGET = process.env.AUTO_CHAT_MODEL || "openrouter/free"
+const AUTO_CODING_TARGET = process.env.AUTO_CODING_MODEL || "openai/gpt-oss-120b:free"
+
+const resolveAutoTarget = (mode, fallback) => {
+    const requested = mode === "chat" ? AUTO_CHAT_TARGET : AUTO_CODING_TARGET
+    if (requested && fallback[requested]) {
+        return requested
+    }
+    return mode === "chat" ? "openrouter/free" : "openai/gpt-oss-120b:free"
+}
 
 export const resolveChatModel = (requestedModel) => {
+    if (requestedModel === "auto") {
+        return resolveAutoTarget("chat", CHAT_MODELS_MAP)
+    }
     if (requestedModel && CHAT_MODELS_MAP[requestedModel]) {
         return requestedModel
     }
-    return DEFAULT_CHAT_MODEL
+    return resolveAutoTarget("chat", CHAT_MODELS_MAP)
+}
+
+export const getChatModelProvider = (requestedModel) => {
+    const resolvedModel = resolveChatModel(requestedModel)
+    return CHAT_MODELS_MAP[resolvedModel]?.provider || "aicc"
 }
 
 export const resolveCodingModel = (requestedModel) => {
+    if (requestedModel === "auto") {
+        return resolveAutoTarget("coding", CODING_MODELS_MAP)
+    }
     if (requestedModel && CODING_MODELS_MAP[requestedModel]) {
         return requestedModel
     }
-    return DEFAULT_CODING_MODEL
+    return resolveAutoTarget("coding", CODING_MODELS_MAP)
 }
 
 export const resolveChatMaxTokens = (requestedModel, requestedMaxTokens) => {
