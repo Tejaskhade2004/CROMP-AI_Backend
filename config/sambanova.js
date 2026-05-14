@@ -3,7 +3,7 @@ dotenv.config()
 
 const SAMBANOVA_API_KEY = process.env.SAMBANOVA_API_KEY
 const SAMBANOVA_BASE_URL = process.env.SAMBANOVA_BASE_URL || "https://api.sambanova.ai/v1/chat/completions"
-const defaultModel = process.env.SAMBANOVA_DEFAULT_MODEL || "DeepSeek-R1"
+const defaultModel = process.env.SAMBANOVA_DEFAULT_MODEL || "DeepSeek-V3.1"
 
 export const generateResponse = async (prompt, modelOverride = defaultModel, options = {}) => {
     if (!SAMBANOVA_API_KEY) throw new Error("SAMBANOVA_API_KEY is missing in .env")

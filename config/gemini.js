@@ -117,6 +117,32 @@ const extractJsonFromMarkdown = (text) => {
     }
 }
 
+const composeHtmlDocument = (payload) => {
+    const rawHtml = typeof payload?.html === "string" ? payload.html.trim() : ""
+    const css = typeof payload?.css === "string" ? payload.css.trim() : ""
+    const js = typeof payload?.js === "string" ? payload.js.trim() : ""
+
+    if (rawHtml && /<\s*html[\s>]/i.test(rawHtml)) {
+        return rawHtml
+    }
+
+    const htmlBody = rawHtml || "<main><h1>Generated website</h1></main>"
+    const styleTag = css ? `\n    <style>\n${css}\n    </style>` : ""
+    const scriptTag = js ? `\n    <script>\n${js}\n    </script>` : ""
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">${styleTag}
+</head>
+<body>
+${htmlBody}
+${scriptTag}
+</body>
+</html>`
+}
+
 export const generateResponse = async (prompt, modelOverride = defaultModel, options = {}) => {
     const responseText = await requestGeminiChatCompletion({
         model: modelOverride,
@@ -124,7 +150,7 @@ export const generateResponse = async (prompt, modelOverride = defaultModel, opt
             {
                 role: "system",
                 content:
-                    "You are a helpful website code generator. CRITICAL: You must respond with ONLY valid raw JSON, no markdown, no explanations, no code blocks. The JSON must contain 'html', 'css', and 'js' properties with the complete code as strings."
+                    "You are a helpful website code generator. CRITICAL: You must respond with ONLY valid raw JSON, no markdown, no explanations, no code blocks. The JSON must contain 'message' and 'code' properties. 'code' must be a full, runnable HTML document containing inline CSS and JavaScript."
             },
             {
                 role: "user",
@@ -138,6 +164,20 @@ export const generateResponse = async (prompt, modelOverride = defaultModel, opt
     // Try to extract JSON from the response
     const jsonResponse = extractJsonFromMarkdown(responseText)
     if (jsonResponse && typeof jsonResponse === 'object') {
+        if (typeof jsonResponse.code === "string" && jsonResponse.code.trim()) {
+            return JSON.stringify({
+                message: jsonResponse.message || "Website generated successfully.",
+                code: jsonResponse.code
+            })
+        }
+
+        if (typeof jsonResponse.html === "string" || typeof jsonResponse.css === "string" || typeof jsonResponse.js === "string") {
+            return JSON.stringify({
+                message: jsonResponse.message || "Website generated successfully.",
+                code: composeHtmlDocument(jsonResponse)
+            })
+        }
+
         return JSON.stringify(jsonResponse)
     }
 

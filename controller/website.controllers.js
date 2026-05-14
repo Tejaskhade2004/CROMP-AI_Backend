@@ -17,9 +17,14 @@ import {
     resolveCodingMaxTokens
 } from "../config/model-catalog.js";
 
-// Credit costs are configurable via env and default to production-safe non-zero values.
-const GENERATE_COST = Number(process.env.GENERATE_WEBSITE_CREDIT_COST || 10);
-const UPDATE_COST = Number(process.env.UPDATE_WEBSITE_CREDIT_COST || 3);
+// Credit costs are configurable via env. Default to production-safe values,
+// but allow zero cost in non-production environments to avoid blocking local dev.
+const GENERATE_COST = Number(
+    process.env.GENERATE_WEBSITE_CREDIT_COST ?? (process.env.NODE_ENV === 'production' ? 10 : 0)
+);
+const UPDATE_COST = Number(
+    process.env.UPDATE_WEBSITE_CREDIT_COST ?? (process.env.NODE_ENV === 'production' ? 3 : 0)
+);
 
 const masterPrompt = `
 YOU ARE A PRINCIPAL FRONTEND ARCHITECT
@@ -169,6 +174,41 @@ ABSOLUTE RULES
 - IF FORMAT IS BROKEN → RESPONSE IS INVALID
 `;
 
+const buildGeminiWebsitePrompt = (userPrompt) => `Create a complete single-file website based on the request below.
+
+Return RAW JSON only with exactly this shape:
+{
+    "message": "Short professional confirmation sentence",
+    "code": "<FULL VALID HTML DOCUMENT>"
+}
+
+Hard rules:
+- code must be a complete HTML document with <!DOCTYPE html>, <html>, <head>, and <body>
+- use only inline CSS and inline JavaScript
+- do not use markdown, code fences, explanations, or extra text
+- make the page responsive and production-ready
+
+User request:
+${userPrompt}
+`
+
+const buildGeminiWebsiteUpdatePrompt = (currentCode, userPrompt) => `Update the existing website below.
+
+Return RAW JSON only with exactly this shape:
+{
+    "message": "Short professional confirmation sentence",
+    "code": "<FULL UPDATED HTML DOCUMENT>"
+}
+
+Hard rules:
+
+Current website:
+${currentCode}
+
+Requested changes:
+${userPrompt}
+`
+
 const createSlug = (title = "website") => {
     const safeBase = title
         .toLowerCase()
@@ -202,16 +242,21 @@ const generateWithSelectedModel = async (prompt, selectedModel, maxTokens) => {
     const resolvedMaxTokens = resolveCodingMaxTokens(resolvedModel, maxTokens)
     const requestOptions = { maxTokens: resolvedMaxTokens }
 
+    if (!modelConfig) {
+        // Fallback to default provider
+        return generateAiccResponse(prompt, "gpt-4o-mini", requestOptions)
+    }
+
     if (modelConfig.provider === "openrouter") {
         return generateOpenRouterResponse(prompt, modelConfig.model, requestOptions)
     }
 
-    if (modelConfig.provider === "huggingface") {
-        return generateHuggingFaceResponse(prompt, modelConfig.model, requestOptions)
-    }
-
     if (modelConfig.provider === "cloudflare") {
-        return generateCloudflareResponse(prompt, modelConfig.model)
+        // cloudflare integration may be optional in some deployments
+        if (typeof generateCloudflareResponse === "function") {
+            return generateCloudflareResponse(prompt, modelConfig.model)
+        }
+        return generateAiccResponse(prompt, "gpt-4o-mini", requestOptions)
     }
 
     if (modelConfig.provider === "mistral") {
@@ -260,18 +305,25 @@ export const generateWebsite = async (req, res) => {
         const user = await User.findById(req.user._id)
         if (!user) return res.status(401).json({ message: "Unauthorized" })
 
+        // Debug: log credit values to help diagnose unexpected insufficient credit errors
+        console.debug(`generateWebsite: user=${user._id} credits=${user.credits} GENERATE_COST=${GENERATE_COST}`)
+
         if (user.credits < GENERATE_COST) return res.status(403).json({ message: "Insufficient credits" })
 
-        const finalPrompt = masterPrompt.replace("{USER_PROMPT}", prompt)
         const selectedModel = resolveSelectedModel(model)
+        const selectedModelConfig = WEBSITE_GENERATION_MODELS[selectedModel]
+        const finalPrompt = selectedModelConfig?.provider === "gemini"
+            ? buildGeminiWebsitePrompt(prompt)
+            : masterPrompt.replace("{USER_PROMPT}", prompt)
+        const retryMessages = selectedModelConfig?.provider === "gemini"
+            ? ["\n\nRETURN RAW JSON ONLY with message and code."]
+            : [
+                "\n\nREMEMBER TO FOLLOW THE OUTPUT FORMAT AND RETURN RAW JSON ONLY.",
+                "\n\nOUTPUT MUST BE RAW JSON WITH KEYS message AND code.",
+                "\n\nIf JSON fails, still return full HTML document in the code field."
+            ]
         let rawResponse = await generateWithSelectedModel(finalPrompt, selectedModel, maxTokens)
         let parse = parseWebsitePayload(rawResponse)
-
-        const retryMessages = [
-            "\n\nREMEMBER TO FOLLOW THE OUTPUT FORMAT AND RETURN RAW JSON ONLY.",
-            "\n\nOUTPUT MUST BE RAW JSON WITH KEYS message AND code.",
-            "\n\nIf JSON fails, still return full HTML document in the code field."
-        ]
 
         for (let i = 0; i < retryMessages.length && !parse; i++) {
             rawResponse = await generateWithSelectedModel(finalPrompt, selectedModel, maxTokens)
@@ -457,6 +509,34 @@ const normalizeModelOutput = (text) => {
     return normalized
 }
 
+const composeHtmlFromStructuredPayload = (payload) => {
+    const html = typeof payload?.html === "string" ? payload.html.trim() : ""
+    const css = typeof payload?.css === "string" ? payload.css.trim() : ""
+    const js = typeof payload?.js === "string" ? payload.js.trim() : ""
+
+    if (!html && !css && !js) return null
+
+    if (html && /<\s*html[\s>]/i.test(html)) {
+        return html
+    }
+
+    const headExtras = css ? `\n<style>\n${css}\n</style>` : ""
+    const bodyExtras = js ? `\n<script>\n${js}\n</script>` : ""
+    const bodyContent = html || "<main><h1>Generated website</h1></main>"
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">${headExtras}
+</head>
+<body>
+${bodyContent}
+${bodyExtras}
+</body>
+</html>`
+}
+
 const parseWebsitePayload = (rawText) => {
     if (!rawText || typeof rawText !== "string") return null
 
@@ -473,6 +553,16 @@ const parseWebsitePayload = (rawText) => {
         return {
             message: parsedJson.message || "Website updated successfully",
             code: parsedJson.code
+        }
+    }
+
+    if (parsedJson && (parsedJson.html || parsedJson.css || parsedJson.js)) {
+        const code = composeHtmlFromStructuredPayload(parsedJson)
+        if (code) {
+            return {
+                message: parsedJson.message || "Website updated successfully",
+                code
+            }
         }
     }
 
@@ -523,12 +613,16 @@ export const generateWebsiteChanges = async (req, res) => {
             })
         }
 
-        const updatePrompt = `
+        const selectedModel = getUpdateModel(req)
+        const selectedModelConfig = WEBSITE_GENERATION_MODELS[selectedModel]
+                const updatePrompt = selectedModelConfig?.provider === "gemini"
+                        ? buildGeminiWebsiteUpdatePrompt(website.latestCode, prompt)
+                        : `
 You are editing an existing website.
 Apply the user's requested changes and return raw JSON with:
 {
-  "message": "Short confirmation",
-  "code": "<full updated html>"
+    "message": "Short confirmation",
+    "code": "<full updated html>"
 }
 
 Current Website HTML:
@@ -537,17 +631,15 @@ ${website.latestCode}
 Requested Changes:
 ${prompt}
 `
-
-        const selectedModel = getUpdateModel(req)
+        const retryMessages = selectedModelConfig?.provider === "gemini"
+            ? ["\n\nRETURN RAW JSON ONLY with message and code."]
+            : [
+                "\n\nREMEMBER TO RETURN RAW JSON ONLY, with no markdown or extra text.",
+                "\n\nOUTPUT MUST BE RAW JSON ONLY, with keys message and code.",
+                "\n\nPlease avoid extra narration and return exactly the JSON object."
+            ]
         let rawResponse = await generateWithSelectedModel(updatePrompt, selectedModel, maxTokens)
         let parsed = parseWebsitePayload(rawResponse)
-
-        // Retry logic for malformed output
-        const retryMessages = [
-            "\n\nREMEMBER TO RETURN RAW JSON ONLY, with no markdown or extra text.",
-            "\n\nOUTPUT MUST BE RAW JSON ONLY, with keys message and code.",
-            "\n\nPlease avoid extra narration and return exactly the JSON object."
-        ]
 
         for (let i = 0; i < retryMessages.length && !parsed; i++) {
             rawResponse = await generateWithSelectedModel(updatePrompt + retryMessages[i], selectedModel, maxTokens)

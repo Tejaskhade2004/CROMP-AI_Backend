@@ -157,11 +157,11 @@ export const CODING_MODELS = [
         maxMaxTokens: 16384
     },
     {
-        id: "sambanova/deepseek-r1",
-        label: "Sambanova DeepSeek R1",
+        id: "sambanova/deepseek-v3.1",
+        label: "Sambanova DeepSeek V3.1",
         provider: "sambanova",
         providerNote: "Sambanova",
-        upstreamModel: "DeepSeek-R1",
+        upstreamModel: "DeepSeek-V3.1",
         defaultMaxTokens: 8192,
         minMaxTokens: 1024,
         maxMaxTokens: 16384
